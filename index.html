@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="아이폰·안드로이드 브라우저에서 음원을 이어붙이고 사진을 얹어 MP4 영상을 만듭니다. 파일은 기기 밖으로 나가지 않습니다.">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>사진·음원 영상 공방</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.js"></script>
+<style>
+/* Layout: one narrow column of three numbered workstations (sound → photos → render), sized for a phone held in one hand */
+:root{
+  --bg:#f3f4f7; --panel:#ffffff; --line:#dfe2ea; --ink:#171a24; --muted:#5d6475;
+  --accent:#2f54c8; --accent-ink:#ffffff; --accent-soft:#e6ebfa;
+  --seg-a:#2f54c8; --seg-b:#7b93e0; --warn:#b4471f; --ok:#1d7a4f;
+  --f-body:"IBM Plex Sans KR",-apple-system,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --r:12px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1117; --panel:#181b24; --line:#2a2f3c; --ink:#e9ebf2; --muted:#9aa1b3;
+  --accent:#7d98f0; --accent-ink:#0f1117; --accent-soft:#222a44;
+  --seg-a:#7d98f0; --seg-b:#3e4f86; --warn:#f08a62; --ok:#5fcf98; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1117; --panel:#181b24; --line:#2a2f3c; --ink:#e9ebf2; --muted:#9aa1b3;
+  --accent:#7d98f0; --accent-ink:#0f1117; --accent-soft:#222a44;
+  --seg-a:#7d98f0; --seg-b:#3e4f86; --warn:#f08a62; --ok:#5fcf98; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55;-webkit-text-size-adjust:100%}
+.wrap{max-width:640px;margin:0 auto;padding-inline:16px;padding-block:20px 56px;display:flex;flex-direction:column;gap:18px}
+header h1{font-size:22px;margin:0;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted);font-size:14px}
+.station{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px;display:flex;flex-direction:column;gap:12px}
+.st-head{display:flex;align-items:center;gap:10px}
+.st-no{font-family:var(--f-mono);font-size:12px;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);flex:none}
+.st-head h2{font-size:17px;margin:0;font-weight:700;flex:1}
+.st-meta{font-family:var(--f-mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.btn{font:inherit;font-weight:500;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:10px;padding:10px 14px;min-height:44px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn:focus-visible,.icon:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.big{width:100%;font-size:16px;min-height:52px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row .btn{flex:1 1 auto}
+.empty{border:1px dashed var(--line);border-radius:10px;padding:18px;color:var(--muted);font-size:14px;text-align:center}
+.hint{font-size:13px;color:var(--muted);margin:0}
+input[type=file]{display:none}
+
+/* sound list */
+.tracks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.track{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;padding:6px;background:var(--panel)}
+.track.dragging{border-color:var(--accent);box-shadow:0 6px 18px rgba(30,40,80,.18);background:var(--accent-soft)}
+.handle{touch-action:none;cursor:grab;width:32px;height:44px;display:grid;place-items:center;color:var(--muted);flex:none;border-radius:8px}
+.handle svg{width:18px;height:18px}
+.ord{font-family:var(--f-mono);font-size:13px;min-width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:#fff;flex:none}
+.tinfo{flex:1;min-width:0}
+.tname{font-size:14px;font-weight:500;line-height:1.35;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.updown{display:flex;flex-direction:column;flex:none}
+.updown .icon{height:26px}
+.tdur{font-family:var(--f-mono);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.icon{border:0;background:transparent;color:var(--muted);width:36px;height:40px;border-radius:8px;cursor:pointer;display:grid;place-items:center;flex:none;font:inherit}
+.icon svg{width:18px;height:18px}
+.icon:active{background:var(--accent-soft)}
+.icon:disabled{opacity:.3}
+.icon.playing{color:var(--accent)}
+
+/* order strip */
+.strip{display:flex;height:30px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.strip span{display:grid;place-items:center;color:#fff;font-family:var(--f-mono);font-size:12px;min-width:16px;border-right:2px solid var(--panel);overflow:hidden}
+.strip span:last-child{border-right:0}
+
+/* photos */
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+@media (min-width:520px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.tile{position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line);background:var(--bg);aspect-ratio:1;max-width:100%}
+.tile img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;-webkit-user-select:none;user-select:none}
+.tile.dragging{outline:3px solid var(--accent);outline-offset:-3px;opacity:.85}
+.tile .ord{position:absolute;left:6px;top:6px;background:var(--accent)}
+.tile .handle{position:absolute;right:4px;top:4px;width:36px;height:36px;background:rgba(15,17,23,.55);color:#fff}
+.tile .tbar{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(transparent,rgba(0,0,0,.6));padding:14px 2px 2px}
+.tile .tbar .icon{color:#fff;width:32px;height:32px}
+.tile .tsec{position:absolute;left:6px;top:38px;font-family:var(--f-mono);font-size:11px;color:#fff;background:rgba(15,17,23,.55);border-radius:6px;padding:1px 5px}
+
+/* render */
+.settings{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+@media (max-width:420px){.settings{grid-template-columns:1fr}}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:12px;color:var(--muted);letter-spacing:.02em}
+select{font:inherit;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:44px;background:var(--panel);color:var(--ink);width:100%}
+.timeline{display:flex;flex-direction:column;gap:4px}
+.timeline .lbl{font-size:12px;color:var(--muted)}
+.prog{height:8px;border-radius:4px;background:var(--accent-soft);overflow:hidden}
+.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.status{font-size:14px;margin:0;color:var(--muted);min-height:1.5em}
+.status.err{color:var(--warn)} .status.ok{color:var(--ok)}
+video{width:100%;max-width:100%;border-radius:10px;background:#000;display:block}
+.elapsed{margin:0;font-family:var(--f-mono);font-size:12.5px;color:var(--ink);font-variant-numeric:tabular-nums;border:1px solid var(--line);border-radius:10px;padding:10px 12px;line-height:1.6}
+.mode{margin:0;font-size:13px;padding:10px 12px;border-radius:10px;background:var(--accent-soft);color:var(--ink)}
+.mode b{color:var(--accent)}
+.note{font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:12px;margin:0}
+@media (prefers-reduced-motion:reduce){.prog i{transition:none}}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>사진·음원 영상 공방</h1>
+    <p>음원을 순서대로 이어 붙이고(디졸브 없이 바로 연결), 사진을 얹어 MP4 영상으로 만듭니다. 파일은 기기 밖으로 나가지 않습니다.</p>
+  </header>
+
+  <!-- 1. Sound -->
+  <section class="station" aria-labelledby="h-sound">
+    <div class="st-head"><span class="st-no">1</span><h2 id="h-sound">음원 이어붙이기</h2><span class="st-meta" id="soundTotal">0:00</span></div>
+    <div class="row">
+      <button class="btn primary" id="addSound" type="button">＋ 음원 추가</button>
+      <button class="btn" id="playJoined" type="button" disabled>▶ 이어붙인 소리 듣기</button>
+    </div>
+    <input type="file" id="soundInput" accept="audio/*,.mp3,.m4a,.aac,.wav,.caf,.aiff,.ogg,.flac" multiple>
+    <div class="strip" id="soundStrip" hidden></div>
+    <ul class="tracks" id="trackList"></ul>
+    <div class="empty" id="soundEmpty">아이폰 ‘파일’ 앱에 있는 MP3·M4A·WAV 등을 고르세요. 여러 개를 한 번에 고를 수 있습니다.</div>
+    <p class="hint">왼쪽 ⠿ 손잡이를 눌러 위아래로 끌면 순서가 바뀝니다. ▲▼ 버튼으로도 한 칸씩 옮길 수 있습니다.</p>
+  </section>
+
+  <!-- 2. Photos -->
+  <section class="station" aria-labelledby="h-photo">
+    <div class="st-head"><span class="st-no">2</span><h2 id="h-photo">사진 고르기</h2><span class="st-meta" id="photoMeta">0장</span></div>
+    <div class="row"><button class="btn primary" id="addPhoto" type="button">＋ 사진 추가</button></div>
+    <input type="file" id="photoInput" accept="image/*" multiple>
+    <div class="grid" id="photoGrid"></div>
+    <div class="empty" id="photoEmpty">사진 보관함에서 1장 이상 고르세요. 전체 음원 길이를 사진 수만큼 똑같이 나눠 보여 줍니다.</div>
+    <p class="hint">사진 오른쪽 위 ⠿ 를 끌어 다른 사진 위에 놓으면 순서가 바뀝니다. 아래 ◀ ▶ 로도 옮길 수 있습니다.</p>
+  </section>
+
+  <!-- 3. Render -->
+  <section class="station" aria-labelledby="h-render">
+    <div class="st-head"><span class="st-no">3</span><h2 id="h-render">MP4 영상 만들기</h2></div>
+    <div class="settings">
+      <div class="field"><label for="optRatio">화면 비율</label>
+        <select id="optRatio"><option value="9:16">세로 9:16 (릴스·쇼츠)</option><option value="16:9">가로 16:9 (유튜브)</option><option value="1:1">정사각 1:1</option><option value="4:5">세로 4:5</option></select></div>
+      <div class="field"><label for="optFit">사진 배치</label>
+        <select id="optFit"><option value="contain-blur">사진 전체 + 흐린 배경</option><option value="contain-black">사진 전체 + 검은 여백</option><option value="cover">화면 꽉 채우기(잘림)</option></select></div>
+      <div class="field"><label for="optRes">화질</label>
+        <select id="optRes"><option value="1080">1080p</option><option value="720">720p (빠름)</option></select></div>
+    </div>
+    <div class="timeline" id="timeline" hidden>
+      <span class="lbl">음원 순서</span><div class="strip" id="tlSound"></div>
+      <span class="lbl">사진 순서</span><div class="strip" id="tlPhoto"></div>
+    </div>
+    <p class="mode" id="modeLine">이 기기에서 쓸 수 있는 방식을 확인하는 중…</p>
+    <button class="btn primary big" id="makeBtn" type="button" disabled>영상 만들기</button>
+    <div class="prog" id="prog" hidden><i id="progBar"></i></div>
+    <p class="elapsed" id="elapsed" hidden></p>
+    <p class="status" id="status" role="status">음원과 사진을 1개 이상 고르면 만들 수 있습니다.</p>
+    <div id="result" hidden style="display:flex;flex-direction:column;gap:10px">
+      <video id="outVideo" controls playsinline></video>
+      <button class="btn primary big" id="saveBtn" type="button">MP4 저장하기</button>
+    </div>
+    <p class="note">아이폰: ‘MP4 저장하기’를 누르면 공유 창이 열립니다. ‘비디오 저장’을 누르면 사진 앱에, ‘파일에 저장’을 누르면 파일 앱에 들어갑니다. 애플 뮤직에서 받은 곡처럼 보호된 음원은 불러올 수 없습니다.</p>
+    <button class="btn" id="demoBtn" type="button">예시 음원·사진으로 먼저 체험하기</button>
+  </section>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const ICON = {
+    grip:'<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.7"/><circle cx="15" cy="6" r="1.7"/><circle cx="9" cy="12" r="1.7"/><circle cx="15" cy="12" r="1.7"/><circle cx="9" cy="18" r="1.7"/><circle cx="15" cy="18" r="1.7"/></svg>',
+    up:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg>',
+    down:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+    left:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>',
+    right:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
+    x:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    play:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+    stop:'<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>'
+  };
+
+  // ---------- state ----------
+  let actx = null;
+  const tracks = [];   // {id, name, buffer}
+  const photos = [];   // {id, name, blob, url}
+  let uid = 0;
+  let player = null;   // {src, id}
+  let lastVideo = null; // {blob, filename}
+
+  const audioCtx = () => {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume().catch(()=>{});
+    return actx;
+  };
+  const fmt = s => { s = Math.max(0, s); const m = Math.floor(s/60), r = Math.floor(s%60); return m + ':' + String(r).padStart(2,'0'); };
+  const fmt1 = s => s >= 60 ? fmt(s) : (s < 10 ? s.toFixed(1) : Math.round(s)) + '초';
+  const totalDur = () => tracks.reduce((a,t)=>a+t.buffer.duration,0);
+  const segColor = i => i % 2 ? 'var(--seg-b)' : 'var(--seg-a)';
+  const setStatus = (msg, kind='') => { const el=$('status'); el.textContent = msg; el.className = 'status' + (kind? ' '+kind:''); };
+
+  // ---------- audio import ----------
+  $('addSound').onclick = () => { audioCtx(); $('soundInput').click(); };
+  $('soundInput').onchange = async e => {
+    const files = [...e.target.files]; e.target.value = '';
+    const ctx = audioCtx(); const failed = [];
+    for (const f of files) {
+      setStatus('음원 읽는 중: ' + f.name);
+      try {
+        const ab = await f.arrayBuffer();
+        const buffer = await decode(ctx, ab);
+        tracks.push({id: ++uid, name: f.name, buffer});
+      } catch (err) { failed.push(f.name); }
+    }
+    renderTracks(); refresh();
+    setStatus(failed.length ? '읽지 못한 파일: ' + failed.join(', ') + ' (보호된 음원이거나 지원하지 않는 형식입니다)' : readyMsg(), failed.length ? 'err' : '');
+  };
+  function decode(ctx, ab){
+    return new Promise((res, rej) => {
+      const p = ctx.decodeAudioData(ab, res, rej);
+      if (p && p.then) p.then(res, rej);
+    });
+  }
+
+  // ---------- audio list ----------
+  function renderTracks(){
+    const ul = $('trackList'); ul.innerHTML = '';
+    tracks.forEach(t => {
+      const li = document.createElement('li'); li.className = 'track'; li.dataset.id = t.id;
+      li.innerHTML = `<span class="handle" aria-label="끌어서 순서 바꾸기">${ICON.grip}</span>
+        <span class="ord"></span>
+        <div class="tinfo"><div class="tname"></div><div class="tdur">${fmt(t.buffer.duration)}</div></div>
+        <button class="icon play" type="button" aria-label="이 음원 듣기">${ICON.play}</button>
+        <span class="updown"><button class="icon up" type="button" aria-label="위로">${ICON.up}</button>
+        <button class="icon down" type="button" aria-label="아래로">${ICON.down}</button></span>
+        <button class="icon del" type="button" aria-label="빼기">${ICON.x}</button>`;
+      li.querySelector('.tname').textContent = t.name;
+      li.querySelector('.up').onclick = () => move(tracks, t.id, -1, renderTracks);
+      li.querySelector('.down').onclick = () => move(tracks, t.id, 1, renderTracks);
+      li.querySelector('.del').onclick = () => { if (player && player.id===t.id) stopPlay(); tracks.splice(tracks.findIndex(x=>x.id===t.id),1); renderTracks(); refresh(); };
+      li.querySelector('.play').onclick = () => togglePlay(t.id, t.buffer, li.querySelector('.play'));
+      attachDrag(li.querySelector('.handle'), li, ul, 'y', () => syncOrder(ul, tracks, renderTrackNumbers));
+      ul.appendChild(li);
+    });
+    renderTrackNumbers();
+  }
+  function renderTrackNumbers(){
+    const lis = [...$('trackList').children];
+    lis.forEach((li,i) => {
+      const o = li.querySelector('.ord'); o.textContent = i+1; o.style.background = segColor(i);
+      li.querySelector('.up').disabled = i===0; li.querySelector('.down').disabled = i===lis.length-1;
+    });
+    renderStrip($('soundStrip'), tracks.map(t=>t.buffer.duration));
+    refresh();
+  }
+  function renderStrip(el, durs){
+    const tot = durs.reduce((a,b)=>a+b,0);
+    el.hidden = !durs.length; el.innerHTML = '';
+    durs.forEach((d,i) => { const s = document.createElement('span'); s.style.flex = String(Math.max(d/tot, .001)); s.style.background = segColor(i); s.textContent = i+1; s.title = fmt(d); el.appendChild(s); });
+  }
+  function move(arr, id, dir, rerender){
+    const i = arr.findIndex(x=>x.id===id), j = i+dir;
+    if (j<0 || j>=arr.length) return;
+    [arr[i],arr[j]] = [arr[j],arr[i]]; rerender(); refresh();
+  }
+  function syncOrder(container, arr, after){
+    const order = [...container.children].map(el => +el.dataset.id);
+    arr.sort((a,b) => order.indexOf(a.id) - order.indexOf(b.id));
+    after();
+  }
+
+  // ---------- drag reorder (pointer events, works with touch) ----------
+  function attachDrag(handle, item, container, axis, onDone){
+    handle.addEventListener('touchmove', e => e.preventDefault(), {passive:false}); // keep iOS from scrolling mid-drag
+    handle.addEventListener('pointerdown', ev => {
+      if (ev.button !== undefined && ev.button > 0) return;
+      ev.preventDefault();
+      item.classList.add('dragging');
+      const moveH = e => {
+        if (e.pointerId !== ev.pointerId) return;
+        e.preventDefault();
+        const el = document.elementFromPoint(e.clientX, e.clientY);
+        if (axis === 'y') {
+          const sibs = [...container.children].filter(c => c !== item);
+          let before = null;
+          for (const s of sibs) { const r = s.getBoundingClientRect(); if (e.clientY < r.top + r.height/2) { before = s; break; } }
+          if (before !== item.nextSibling || (before===null && container.lastElementChild!==item)) container.insertBefore(item, before);
+          autoScroll(e.clientY);
+        } else {
+          const over = el && el.closest('.tile');
+          if (over && over !== item && over.parentNode === container) {
+            const kids = [...container.children];
+            const from = kids.indexOf(item), to = kids.indexOf(over);
+            container.insertBefore(item, from < to ? over.nextSibling : over);
+          }
+          autoScroll(e.clientY);
+        }
+        onDone();
+      };
+      const up = () => {
+        item.classList.remove('dragging');
+        document.removeEventListener('pointermove', moveH);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
+        onDone();
+      };
+      // Listen on document: moving the item in the DOM drops pointer capture on the handle.
+      document.addEventListener('pointermove', moveH);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', up);
+    });
+  }
+  function autoScroll(y){
+    const edge = 70, h = window.innerHeight;
+    if (y < edge) window.scrollBy(0, -12); else if (y > h - edge) window.scrollBy(0, 12);
+  }
+
+  // ---------- preview playback ----------
+  function stopPlay(){
+    if (player) { try { player.src.stop(); } catch(e){} if (player.btn) { player.btn.innerHTML = player.label; player.btn.classList.remove('playing'); } player = null; }
+  }
+  function togglePlay(id, buffer, btn, label){
+    const was = player && player.id === id; stopPlay(); if (was) return;
+    const ctx = audioCtx(); const src = ctx.createBufferSource(); src.buffer = buffer; src.connect(ctx.destination);
+    const lab = label || btn.innerHTML;
+    src.onended = () => { if (player && player.src === src) stopPlay(); };
+    src.start(); player = {src, id, btn, label: lab};
+    btn.innerHTML = label ? '■ 정지' : ICON.stop; btn.classList.add('playing');
+  }
+  $('playJoined').onclick = () => {
+    const b = joinAudio(audioCtx().sampleRate);
+    togglePlay('joined', b, $('playJoined'), '▶ 이어붙인 소리 듣기');
+  };
+
+  // Hard-cut concatenation: samples are copied end-to-end, no fades or overlap.
+  function joinAudio(rate){
+    const ch = Math.min(2, Math.max(...tracks.map(t=>t.buffer.numberOfChannels)));
+    const len = tracks.reduce((a,t)=>a + Math.round(t.buffer.duration*rate), 0);
+    const out = audioCtx().createBuffer(ch, Math.max(1,len), rate);
+    let off = 0;
+    for (const t of tracks) {
+      const b = t.buffer; const n = Math.min(b.length, len - off);
+      for (let c=0;c<ch;c++) {
+        const src = b.getChannelData(Math.min(c, b.numberOfChannels-1));
+        out.getChannelData(c).set(n === src.length ? src : src.subarray(0,n), off);
+      }
+      off += Math.round(b.duration*rate);
+    }
+    return out;
+  }
+
+  // ---------- photo import ----------
+  $('addPhoto').onclick = () => $('photoInput').click();
+  $('photoInput').onchange = async e => {
+    const files = [...e.target.files]; e.target.value=''; const failed=[];
+    for (const f of files) {
+      setStatus('사진 준비 중: ' + f.name);
+      try { const blob = await shrink(f, 2160); photos.push({id: ++uid, name: f.name, blob, url: URL.createObjectURL(blob)}); }
+      catch(err){ failed.push(f.name); }
+    }
+    renderPhotos(); refresh();
+    setStatus(failed.length ? '열지 못한 사진: ' + failed.join(', ') : readyMsg(), failed.length?'err':'');
+  };
+  function loadImg(src){
+    return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+  }
+  // Downscale large camera photos so many of them fit in phone memory.
+  async function shrink(file, maxSide){
+    const url = URL.createObjectURL(file);
+    try {
+      const im = await loadImg(url);
+      const s = Math.min(1, maxSide / Math.max(im.naturalWidth, im.naturalHeight));
+      const c = document.createElement('canvas'); c.width = Math.round(im.naturalWidth*s); c.height = Math.round(im.naturalHeight*s);
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), 'image/jpeg', 0.92));
+    } finally { URL.revokeObjectURL(url); }
+  }
+  function renderPhotos(){
+    const g = $('photoGrid'); g.innerHTML = '';
+    photos.forEach(p => {
+      const d = document.createElement('div'); d.className = 'tile'; d.dataset.id = p.id;
+      d.innerHTML = `<img alt="" src="${p.url}"><span class="ord"></span><span class="handle" aria-label="끌어서 순서 바꾸기">${ICON.grip}</span>
+        <span class="tsec"></span><div class="tbar"><button class="icon l" type="button" aria-label="앞으로">${ICON.left}</button>
+        <button class="icon del" type="button" aria-label="빼기">${ICON.x}</button><button class="icon r" type="button" aria-label="뒤로">${ICON.right}</button></div>`;
+      d.querySelector('.l').onclick = () => move(photos, p.id, -1, renderPhotos);
+      d.querySelector('.r').onclick = () => move(photos, p.id, 1, renderPhotos);
+      d.querySelector('.del').onclick = () => { URL.revokeObjectURL(p.url); photos.splice(photos.findIndex(x=>x.id===p.id),1); renderPhotos(); refresh(); };
+      attachDrag(d.querySelector('.handle'), d, g, 'grid', () => syncOrder(g, photos, renderPhotoNumbers));
+      g.appendChild(d);
+    });
+    renderPhotoNumbers();
+  }
+  function renderPhotoNumbers(){
+    const tiles = [...$('photoGrid').children]; const per = photos.length ? totalDur()/photos.length : 0;
+    tiles.forEach((t,i) => {
+      t.querySelector('.ord').textContent = i+1;
+      t.querySelector('.tsec').textContent = per ? fmt1(per) : '';
+      t.querySelector('.l').disabled = i===0; t.querySelector('.r').disabled = i===tiles.length-1;
+    });
+    refresh();
+  }
+
+  // ---------- shared UI refresh ----------
+  function readyMsg(){
+    if (!tracks.length && !photos.length) return '음원과 사진을 1개 이상 고르면 만들 수 있습니다.';
+    if (!tracks.length) return '음원을 1개 이상 고르세요.';
+    if (!photos.length) return '사진을 1장 이상 고르세요.';
+    return `준비됨: 음원 ${tracks.length}개 (${fmt(totalDur())}), 사진 ${photos.length}장.`;
+  }
+  let busy = false;
+  function refresh(){
+    const T = totalDur();
+    $('soundTotal').textContent = tracks.length ? `${tracks.length}개 · ${fmt(T)}` : '0:00';
+    $('photoMeta').textContent = photos.length ? `${photos.length}장${T ? ' · 장당 ' + fmt1(T/photos.length) : ''}` : '0장';
+    $('soundEmpty').hidden = tracks.length > 0; $('photoEmpty').hidden = photos.length > 0;
+    $('playJoined').disabled = !tracks.length;
+    $('makeBtn').disabled = busy || !tracks.length || !photos.length;
+    $('timeline').hidden = !(tracks.length && photos.length);
+    renderStrip($('tlSound'), tracks.map(t=>t.buffer.duration));
+    renderStrip($('tlPhoto'), photos.map(()=>1));
+    [...$('photoGrid').children].forEach(t => { t.querySelector('.tsec').textContent = photos.length && T ? fmt1(T/photos.length) : ''; });
+    if (!busy) setStatus(readyMsg());
+  }
+
+  // ---------- frame drawing ----------
+  const canBlur = (() => { try { const c = document.createElement('canvas').getContext('2d'); return 'filter' in c; } catch(e){ return false; } })();
+  function drawFrame(g, im, W, H, fit){
+    g.save(); g.filter = 'none'; g.fillStyle = '#000'; g.fillRect(0,0,W,H);
+    const iw = im.naturalWidth || im.width, ih = im.naturalHeight || im.height;
+    const cover = Math.max(W/iw, H/ih), contain = Math.min(W/iw, H/ih);
+    const put = s => { const w = iw*s, h = ih*s; g.drawImage(im, (W-w)/2, (H-h)/2, w, h); };
+    if (fit === 'cover') put(cover);
+    else {
+      if (fit === 'contain-blur') {
+        if (canBlur) g.filter = `blur(${Math.round(Math.max(W,H)/30)}px)`;
+        put(cover * 1.15); g.filter = 'none';
+        g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0,0,W,H);
+      }
+      put(contain);
+    }
+    g.restore();
+  }
+  function dims(){
+    const [a,b] = $('optRatio').value.split(':').map(Number); const base = +$('optRes').value;
+    let W, H; if (a >= b) { H = base; W = Math.round(base*a/b); } else { W = base; H = Math.round(base*b/a); }
+    return {W: W - W%2, H: H - H%2};
+  }
+
+  // ---------- render ----------
+  $('makeBtn').onclick = async () => {
+    stopPlay(); busy = true; refresh(); $('result').hidden = true; $('prog').hidden = false; prog(0);
+    let wake = null; try { wake = await navigator.wakeLock?.request('screen'); } catch(e){}
+    let wentAway = false; const onAway = () => { if (document.hidden) wentAway = true; };
+    document.addEventListener('visibilitychange', onAway);
+    try {
+      const t0 = performance.now(), audioLen = totalDur();
+      const tick = setInterval(() => { $('elapsed').textContent = `경과 ${((performance.now()-t0)/1000).toFixed(1)}초 · 음원 길이 ${fmt(audioLen)}`; }, 200);
+      $('elapsed').hidden = false;
+      let out; try { out = await renderVideo(); } finally { clearInterval(tick); }
+      const took = (performance.now()-t0)/1000;
+      out.report = `${out.mode} · 걸린 시간 ${took.toFixed(1)}초 / 음원 길이 ${audioLen.toFixed(1)}초 → 음원 길이의 ${Math.round(took/audioLen*100)}% (${(audioLen/took).toFixed(1)}배속) · ${$('optRes').value}p ${$('optRatio').value} · 사진 ${photos.length}장`;
+      $('elapsed').textContent = out.report;
+      lastVideo = out;
+      const v = $('outVideo'); if (v.src) URL.revokeObjectURL(v.src); v.src = URL.createObjectURL(out.blob);
+      $('result').hidden = false;
+      setStatus(`완성: ${out.filename} · ${(out.blob.size/1048576).toFixed(1)}MB${out.note ? ' · ' + out.note : ''}`, 'ok');
+    } catch (err) {
+      console.error(err);
+      const why = (err && err.message || String(err));
+      setStatus('영상을 만들지 못했습니다: ' + why + (wentAway && !/화면이 꺼지/.test(why) ? ' — 만드는 도중 화면이 꺼졌던 것이 원인일 수 있습니다. 화면을 켠 채로 다시 시도해 주세요.' : ' — 화질을 720p로 낮추거나 사진 수를 줄여 다시 시도해 보세요.'), 'err');
+    } finally { document.removeEventListener('visibilitychange', onAway); busy = false; $('makeBtn').disabled = !tracks.length || !photos.length; $('prog').hidden = true; try { wake && wake.release(); } catch(e){} }
+  };
+  const prog = f => { $('progBar').style.width = Math.round(f*100) + '%'; };
+  const stamp = () => { const d = new Date(), p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`; };
+
+  async function renderVideo(){
+    const {W, H} = dims();
+    if (window.VideoEncoder && window.AudioEncoder && window.Mp4Muxer) {
+      const vcfg = await pickVideoConfig(W, H);
+      const acfg = vcfg && await pickAudioConfig();
+      if (vcfg && acfg) return await renderWebCodecs(W, H, vcfg, acfg);
+    }
+    return await renderRecorder(W, H);
+  }
+  async function pickVideoConfig(W, H){
+    const codecs = ['avc1.640028','avc1.4d0028','avc1.42e028','avc1.42e01f'];
+    for (const codec of codecs) {
+      const cfg = {codec, width: W, height: H, bitrate: W*H >= 2e6 ? 6_000_000 : 3_500_000, framerate: 30};
+      try { const r = await VideoEncoder.isConfigSupported(cfg); if (r.supported) return r.config || cfg; } catch(e){}
+    }
+    return null;
+  }
+  const AAC_RATES = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+  function aacASC(rate, ch){ const i = AAC_RATES.indexOf(rate); return new Uint8Array([(2<<3) | (i>>1), ((i&1)<<7) | (ch<<3)]); }
+  async function pickAudioConfig(){
+    const ch = Math.min(2, Math.max(...tracks.map(t=>t.buffer.numberOfChannels)));
+    for (const sampleRate of [audioCtx().sampleRate, 48000, 44100].filter(r => AAC_RATES.includes(r))) {
+      const cfg = {codec:'mp4a.40.2', sampleRate, numberOfChannels: ch, bitrate: 192000};
+      try { const r = await AudioEncoder.isConfigSupported(cfg); if (r.supported) return cfg; } catch(e){}
+    }
+    return null;
+  }
+  async function resampled(rate){
+    const joined = joinAudio(audioCtx().sampleRate);
+    if (joined.sampleRate === rate) return joined;
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const oc = new OAC(joined.numberOfChannels, Math.ceil(joined.duration*rate), rate);
+    const s = oc.createBufferSource(); s.buffer = joined; s.connect(oc.destination); s.start();
+    return await oc.startRendering();
+  }
+
+  // Fast path: encode offline with WebCodecs (H.264 + AAC) and mux to MP4.
+  async function renderWebCodecs(W, H, vcfg, acfg){
+    setStatus('영상 만드는 중… (화면을 켜 두세요)');
+    const audio = await resampled(acfg.sampleRate);
+    const T = audio.duration;
+    const {Muxer, ArrayBufferTarget} = window.Mp4Muxer;
+    const target = new ArrayBufferTarget();
+    const muxer = new Muxer({ target, fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+      video: {codec:'avc', width: W, height: H, frameRate: 30},
+      audio: {codec:'aac', numberOfChannels: acfg.numberOfChannels, sampleRate: acfg.sampleRate} });
+    let failure = null;
+    const venc = new VideoEncoder({ output: (c,m) => muxer.addVideoChunk(c,m), error: e => failure = e });
+    venc.configure(vcfg);
+    // Safari 26 writes a malformed AAC decoder config (WebKit bug 302253), which makes the MP4 silent.
+    // So the AAC config is built here from the known settings, and ADTS headers are stripped if present.
+    const ameta = {decoderConfig: {codec:'mp4a.40.2', sampleRate: acfg.sampleRate, numberOfChannels: acfg.numberOfChannels, description: aacASC(acfg.sampleRate, acfg.numberOfChannels)}};
+    const aenc = new AudioEncoder({ error: e => failure = e, output: c => {
+      let d = new Uint8Array(c.byteLength); c.copyTo(d);
+      if (d.length > 7 && d[0] === 0xFF && (d[1] & 0xF6) === 0xF0) d = d.subarray((d[1] & 1) ? 7 : 9);
+      muxer.addAudioChunkRaw(d, c.type, c.timestamp, c.duration || 0, ameta);
+    }});
+    aenc.configure(acfg);
+
+    // audio
+    const ch = acfg.numberOfChannels, rate = acfg.sampleRate, N = audio.length, step = rate; // 1s per chunk
+    const chans = []; for (let c=0;c<ch;c++) chans.push(audio.getChannelData(Math.min(c, audio.numberOfChannels-1)));
+    for (let off = 0; off < N; off += step) {
+      if (failure) throw failure;
+      const n = Math.min(step, N-off); const data = new Float32Array(n*ch);
+      for (let c=0;c<ch;c++) data.set(chans[c].subarray(off, off+n), c*n);
+      const ad = new AudioData({format:'f32-planar', sampleRate: rate, numberOfFrames: n, numberOfChannels: ch, timestamp: Math.round(off/rate*1e6), data});
+      aenc.encode(ad); ad.close();
+      while (aenc.encodeQueueSize > 8) await sleep(5);
+      prog(0.15 * off/N);
+    }
+
+    // video: still images, 5 frames per second, keyframe at each photo change and every 2s
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
+    const g = canvas.getContext('2d');
+    const fit = $('optFit').value, per = T / photos.length, fps = 5, dt = 1/fps;
+    let n = 0;
+    for (let i = 0; i < photos.length; i++) {
+      const im = await loadImg(photos[i].url);
+      drawFrame(g, im, W, H, fit);
+      const t0 = i*per, t1 = (i === photos.length-1) ? T : (i+1)*per;
+      let t = t0, sinceKey = Infinity;
+      while (t < t1 - 1e-6) {
+        if (failure) throw failure;
+        const tn = Math.min(t + dt, t1);
+        const vf = new VideoFrame(canvas, {timestamp: Math.round(t*1e6), duration: Math.round((tn-t)*1e6)});
+        const key = t === t0 || sinceKey >= 2;
+        venc.encode(vf, {keyFrame: key}); vf.close();
+        sinceKey = key ? dt : sinceKey + dt;
+        t = tn; n++;
+        while (venc.encodeQueueSize > 4) await sleep(4);
+        if (n % 10 === 0) { prog(0.15 + 0.8 * t/T); await sleep(0); }
+      }
+    }
+    setStatus('마무리하는 중…');
+    await venc.flush(); await aenc.flush();
+    if (failure) throw failure;
+    venc.close(); aenc.close();
+    muxer.finalize(); prog(1);
+    return {blob: new Blob([target.buffer], {type:'video/mp4'}), filename: `영상_${stamp()}.mp4`, mode: '빠른 방식'};
+  }
+
+  // Fallback: play the joined audio and record the canvas in real time with MediaRecorder.
+  async function renderRecorder(W, H){
+    if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) throw new Error('이 브라우저는 영상 만들기를 지원하지 않습니다. 최신 Safari 또는 Chrome에서 열어 주세요');
+    const types = ['video/mp4;codecs="avc1.42E01E,mp4a.40.2"','video/mp4;codecs=avc1,mp4a','video/mp4','video/webm;codecs=vp9,opus','video/webm'];
+    const mime = types.find(t => MediaRecorder.isTypeSupported(t));
+    if (!mime) throw new Error('지원하는 영상 형식이 없습니다');
+    const isMp4 = mime.startsWith('video/mp4');
+    const ctx = audioCtx(); const audio = joinAudio(ctx.sampleRate); const T = audio.duration;
+    const ims = []; for (const p of photos) ims.push(await loadImg(p.url));
+    const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H; const g = canvas.getContext('2d');
+    const fit = $('optFit').value, per = T / photos.length;
+    drawFrame(g, ims[0], W, H, fit);
+    const vstream = canvas.captureStream(30);
+    const dest = ctx.createMediaStreamDestination();
+    const src = ctx.createBufferSource(); src.buffer = audio; src.connect(dest);
+    const stream = new MediaStream([...vstream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+    const rec = new MediaRecorder(stream, {mimeType: mime, videoBitsPerSecond: 5_000_000, audioBitsPerSecond: 192000});
+    const parts = []; rec.ondataavailable = e => e.data && e.data.size && parts.push(e.data);
+    const done = new Promise(r => rec.onstop = r);
+    setStatus(`실시간으로 녹화 중… 약 ${fmt(T)} 걸립니다. 화면을 끄거나 다른 앱으로 가지 마세요.`);
+    rec.start(1000);
+    const start = ctx.currentTime + 0.15; src.start(start);
+    let cur = -1, timer, hidden = false;
+    const onVis = () => { if (document.hidden) hidden = true; };
+    document.addEventListener('visibilitychange', onVis);
+    await new Promise(resolve => {
+      const tick = () => {
+        const t = ctx.currentTime - start;
+        const idx = Math.min(photos.length-1, Math.max(0, Math.floor(t / per)));
+        if (idx !== cur) cur = idx;
+        drawFrame(g, ims[cur], W, H, fit); // redraw every tick so the stream keeps producing frames
+        prog(Math.min(1, Math.max(0, t/T)));
+        if (t >= T + 0.2 || hidden) { clearInterval(timer); resolve(); }
+      };
+      timer = setInterval(tick, 1000/30);
+    });
+    document.removeEventListener('visibilitychange', onVis);
+    try { src.stop(); } catch(e){}
+    rec.stop(); await done;
+    if (hidden) throw new Error('녹화 도중 화면이 꺼지거나 다른 앱으로 이동해서 중단됐습니다. 이 방식은 끝날 때까지 화면을 켜 둬야 합니다');
+    const blob = new Blob(parts, {type: mime.split(';')[0]});
+    return {blob, filename: `영상_${stamp()}.${isMp4 ? 'mp4' : 'webm'}`, note: isMp4 ? '' : '이 브라우저는 MP4 녹화를 지원하지 않아 WebM으로 만들었습니다', mode: '실시간 녹화 방식'};
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  // ---------- save ----------
+  $('saveBtn').onclick = async () => {
+    if (!lastVideo) return;
+    const {blob, filename} = lastVideo;
+    try {
+      const file = new File([blob], filename, {type: blob.type});
+      if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file]}); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setStatus('저장을 시작했습니다. 저장되지 않으면 위 영상을 길게 눌러 저장해 보세요.');
+  };
+
+  // ---------- demo material ----------
+  $('demoBtn').onclick = async () => {
+    const ctx = audioCtx(); const rate = ctx.sampleRate;
+    const tone = (secs, freqs) => { const b = ctx.createBuffer(2, Math.round(secs*rate), rate);
+      for (let c=0;c<2;c++){ const d = b.getChannelData(c); for (let i=0;i<d.length;i++){ const t=i/rate; const f=freqs[Math.floor(t*2)%freqs.length]; d[i]=0.25*Math.sin(2*Math.PI*f*t)*Math.min(1,(t*2%1)*40)*Math.min(1,(1-(t*2%1))*40); } } return b; };
+    [['예시 A (도·미·솔).wav',3,[262,330,392]],['예시 B (낮은 음).wav',2,[147,175]],['예시 C (높은 음).wav',2.5,[523,659,784]]]
+      .forEach(([name,s,f]) => tracks.push({id: ++uid, name, buffer: tone(s,f)}));
+    const hues = [[47,84,200],[180,71,31],[29,122,79]];
+    for (let i=0;i<3;i++){ const c=document.createElement('canvas'); c.width=1200; c.height=900; const g=c.getContext('2d');
+      const [r,gr,b]=hues[i]; const grd=g.createLinearGradient(0,0,1200,900); grd.addColorStop(0,`rgb(${r},${gr},${b})`); grd.addColorStop(1,'#111');
+      g.fillStyle=grd; g.fillRect(0,0,1200,900); g.fillStyle='#fff'; g.font='bold 260px sans-serif'; g.textAlign='center'; g.textBaseline='middle'; g.fillText('사진 '+(i+1),600,450);
+      const blob = await new Promise(r=>c.toBlob(r,'image/jpeg',.9)); photos.push({id: ++uid, name:'예시 사진 '+(i+1), blob, url: URL.createObjectURL(blob)}); }
+    renderTracks(); renderPhotos(); refresh();
+  };
+
+  // Tell the viewer up front which method this device will use.
+  (async () => {
+    let fast = false;
+    try {
+      if (window.VideoEncoder && window.AudioEncoder && window.Mp4Muxer) {
+        const v = await pickVideoConfig(1080, 1920) || await pickVideoConfig(720, 1280);
+        let a = false;
+        for (const sampleRate of [48000, 44100]) { try { if ((await AudioEncoder.isConfigSupported({codec:'mp4a.40.2', sampleRate, numberOfChannels:2, bitrate:192000})).supported) { a = true; break; } } catch(e){} }
+        fast = !!(v && a);
+      }
+    } catch(e){}
+    $('modeLine').innerHTML = fast
+      ? '<b>빠른 방식</b> · 녹화 없이 바로 계산해서 만듭니다. 보통 음원 길이보다 훨씬 빨리 끝납니다. 만드는 동안만 화면을 켜 두세요.'
+      : '<b>실시간 녹화 방식</b> · 이 브라우저는 빠른 방식을 지원하지 않아 음원 길이만큼 걸립니다. 아이폰은 iOS 26 이상으로 업데이트하면 빠른 방식을 쓸 수 있습니다.';
+  })();
+
+  refresh();
+})();
+</script>
+
+</body>
+</html>
